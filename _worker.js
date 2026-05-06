@@ -4,8 +4,6 @@ import { connect } from "cloudflare:sockets";
 let 订阅路径 = "订阅路径";
 let 伪装网页;
 let 验证UUID;
-let NAT64前缀 = "2a02:898:146:64::";
-let DOH地址 = "1.1.1.1";
 let 反代IP = "proxyip.cmliussss.net";
 
 // 关键词拆分(防检测)
@@ -17,13 +15,14 @@ const 威图锐 = 威图锐拆分.join("");
 const 科拉什 = 科拉什拆分.join("");
 const 维列斯 = 维列斯拆分.join("");
 
+// 转换密钥格式
+const 转换密钥格式 = Array.from({ length: 256 }, (_, i) => (i + 256).toString(16).slice(1));
+
 // 网页入口
 export default {
   async fetch(访问请求, env) {
     订阅路径 = env.SUB_PATH ?? 订阅路径;
     验证UUID = 生成UUID();
-    NAT64前缀 = env.NAT64 ?? NAT64前缀;
-    DOH地址 = env.DOH ?? DOH地址;
     反代IP = env.PROXY_IP ?? 反代IP;
     伪装网页 = env.FAKE_WEB;
 
@@ -102,23 +101,24 @@ export default {
 
 // 脚本主要架构
 async function 升级WS请求() {
-  const 创建WS接口 = new WebSocketPair();
-  const [客户端, WS接口] = Object.values(创建WS接口);
+  const [客户端, WS接口] = Object.values(new WebSocketPair());
   WS接口.accept();
+  WS接口.binaryType = "arraybuffer";
   WS接口.send(new Uint8Array([0, 0]));
   启动传输管道(WS接口);
   return new Response(null, { status: 101, webSocket: 客户端 });
 }
 
 async function 启动传输管道(WS接口) {
-  let TCP接口,
-    首包数据 = false,
-    首包处理 = Promise.resolve(),
-    传输数据;
-  WS接口.addEventListener("message", async (event) => {
-    首包处理 = 首包处理.then(async () => {
-      if (!首包数据) {
-        首包数据 = true;
+  let TCP接口;
+  let 首包数据 = true;
+  let 处理队列 = Promise.resolve();
+  let 传输数据;
+
+  WS接口.addEventListener("message", (event) => {
+    处理队列 = 处理队列.then(async () => {
+      if (首包数据) {
+        首包数据 = false;
         await 解析VL标头(event.data);
       } else {
         await 传输数据.write(event.data);
@@ -128,7 +128,7 @@ async function 启动传输管道(WS接口) {
 
   async function 解析VL标头(VL数据) {
     if (验证VL的密钥(new Uint8Array(VL数据.slice(1, 17))) !== 验证UUID) {
-      return new Response(null, { status: 400 });
+      return;
     }
 
     const 获取数据定位 = new Uint8Array(VL数据)[17];
@@ -164,122 +164,46 @@ async function 启动传输管道(WS接口) {
         访问地址 = ipv6.join(":");
         break;
       default:
-        return new Response(null, { status: 400 });
+        return;
     }
 
     const 写入初始数据 = VL数据.slice(地址信息索引 + 地址长度);
 
     try {
-      // 第一步：尝试直连
-      TCP接口 = await connect({ hostname: 访问地址, port: 访问端口, allowHalfOpen: true });
+      TCP接口 = connect({ hostname: 访问地址, port: 访问端口 });
       await TCP接口.opened;
     } catch {
-      // 直连失败，检查是否有NAT64前缀
-      if (NAT64前缀) {
-        try {
-          // 第二步：尝试NAT64连接
-          const NAT64地址 = 识别地址类型 === 1
-            ? 转换IPv4到NAT64(访问地址)
-            : 转换IPv4到NAT64(await 解析域名到IPv4(访问地址));
-          TCP接口 = await connect({ hostname: NAT64地址, port: 访问端口 });
-          await TCP接口.opened;
-        } catch {
-          // NAT64连接失败，使用反代
-          if (反代IP) {
-            try {
-              let [反代IP地址, 反代IP端口] = 反代IP.split(":");
-              TCP接口 = await connect({
-                hostname: 反代IP地址,
-                port: 反代IP端口 || 443,
-              });
-              await TCP接口.opened;
-            } catch {
-              console.error("连接均失败");
-            }
-          } else {
-            console.error("连接均失败");
-          }
-        }
-      } else {
-        // 没有NAT64前缀，尝试反代连接
-        if (反代IP) {
-          try {
-            let [反代IP地址, 反代IP端口] = 反代IP.split(":");
-            TCP接口 = await connect({
-              hostname: 反代IP地址,
-              port: 反代IP端口 || 443,
-            });
-            await TCP接口.opened;
-          } catch {
-            console.error("连接均失败");
-          }
-        } else {
-          console.error("仅直连但失败");
-        }
-      }
+      const [反代IP地址, 反代IP端口 = 访问端口] = 反代IP.split(":");
+      TCP接口 = connect({ hostname: 反代IP地址, port: 反代IP端口 });
+      await TCP接口.opened;
     }
 
     建立传输管道(写入初始数据);
   }
 
   function 验证VL的密钥(arr, offset = 0) {
-    const uuid = (
-      转换密钥格式[arr[offset + 0]] +
-      转换密钥格式[arr[offset + 1]] +
-      转换密钥格式[arr[offset + 2]] +
-      转换密钥格式[arr[offset + 3]] +
-      "-" +
-      转换密钥格式[arr[offset + 4]] +
-      转换密钥格式[arr[offset + 5]] +
-      "-" +
-      转换密钥格式[arr[offset + 6]] +
-      转换密钥格式[arr[offset + 7]] +
-      "-" +
-      转换密钥格式[arr[offset + 8]] +
-      转换密钥格式[arr[offset + 9]] +
-      "-" +
-      转换密钥格式[arr[offset + 10]] +
-      转换密钥格式[arr[offset + 11]] +
-      转换密钥格式[arr[offset + 12]] +
-      转换密钥格式[arr[offset + 13]] +
-      转换密钥格式[arr[offset + 14]] +
-      转换密钥格式[arr[offset + 15]]
-    ).toLowerCase();
+    const uuid = (转换密钥格式[arr[offset + 0]] + 转换密钥格式[arr[offset + 1]] + 转换密钥格式[arr[offset + 2]] + 转换密钥格式[arr[offset + 3]] + "-" + 转换密钥格式[arr[offset + 4]] + 转换密钥格式[arr[offset + 5]] + "-" + 转换密钥格式[arr[offset + 6]] + 转换密钥格式[arr[offset + 7]] + "-" + 转换密钥格式[arr[offset + 8]] + 转换密钥格式[arr[offset + 9]] + "-" + 转换密钥格式[arr[offset + 10]] + 转换密钥格式[arr[offset + 11]] + 转换密钥格式[arr[offset + 12]] + 转换密钥格式[arr[offset + 13]] + 转换密钥格式[arr[offset + 14]] + 转换密钥格式[arr[offset + 15]]).toLowerCase();
     return uuid;
-  }
-
-  const 转换密钥格式 = [];
-  for (let i = 0; i < 256; ++i) {
-    转换密钥格式.push((i + 256).toString(16).slice(1));
   }
 
   async function 建立传输管道(写入初始数据) {
     传输数据 = TCP接口.writable.getWriter();
-    if (写入初始数据) await 传输数据.write(写入初始数据);
+
+    if (写入初始数据?.byteLength > 0) {
+      await 传输数据.write(写入初始数据);
+    }
+
     TCP接口.readable.pipeTo(
       new WritableStream({
-        async write(VL数据) {
-          WS接口.send(VL数据);
+        write(chunk) {
+          WS接口.send(chunk);
         },
       })
     );
   }
 }
 
-// 其它工具函数
-function 转换IPv4到NAT64(ipv4地址) {
-  const 清理后的前缀 = NAT64前缀.replace(/\/\d+$/, '');
-  const 十六进制 = ipv4地址.split(".").map(段 => (+段).toString(16).padStart(2, "0"));
-  return `[${清理后的前缀}${十六进制[0]}${十六进制[1]}:${十六进制[2]}${十六进制[3]}]`;
-}
-
-async function 解析域名到IPv4(域名) {
-  const { Answer } = await (await fetch(`https://${DOH地址}/dns-query?name=${域名}&type=A`, {
-    headers: { "Accept": "application/dns-json" }
-  })).json();
-  return Answer.find(({ type }) => type === 1).data;
-}
-
+// UUID生成函数
 function 生成UUID() {
   const 二十位 = Array.from(new TextEncoder().encode(订阅路径))
     .map((byte) => byte.toString(16).padStart(2, "0"))
@@ -287,10 +211,8 @@ function 生成UUID() {
     .slice(0, 20)
     .padEnd(20, "0");
 
-  const 前八位 = 二十位
-    .slice(0, 8);
-  const 后十二位 = 二十位
-    .slice(-12);
+  const 前八位 = 二十位.slice(0, 8);
+  const 后十二位 = 二十位.slice(-12);
 
   return `${前八位}-0000-4000-8000-${后十二位}`;
 }
@@ -324,7 +246,7 @@ async function 提示界面() {
 }
 
 function 威图锐配置文件(hostName) {
-  const 配置内容 = `${维列斯}://${验证UUID}@${hostName}:443?encryption=none&security=tls&sni=${hostName}&fp=chrome&type=ws&host=${hostName}#原生节点`;
+  const 配置内容 = `${维列斯}://${验证UUID}@${hostName}:443?encryption=none&security=tls&sni=${hostName}&fp=chrome&type=ws&host=${hostName}#${hostName}`;
 
   return new Response(配置内容);
 }
