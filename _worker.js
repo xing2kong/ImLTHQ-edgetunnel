@@ -4,8 +4,6 @@ import { connect } from "cloudflare:sockets";
 let 订阅路径 = "订阅路径";
 let 伪装网页;
 let 验证UUID;
-let 优选链接 = "https://raw.githubusercontent.com/ImLTHQ/edgetunnel/main/output.txt";
-let 优选列表 = [];
 let NAT64前缀 = "2a02:898:146:64::";
 let DOH地址 = "1.1.1.1";
 let 反代IP = "proxyip.cmliussss.net";
@@ -24,7 +22,6 @@ export default {
   async fetch(访问请求, env) {
     订阅路径 = env.SUB_PATH ?? 订阅路径;
     验证UUID = 生成UUID();
-    优选链接 = env.TXT_URL ?? 优选链接;
     NAT64前缀 = env.NAT64 ?? NAT64前缀;
     DOH地址 = env.DOH ?? DOH地址;
     反代IP = env.PROXY_IP ?? 反代IP;
@@ -75,10 +72,6 @@ export default {
     }
 
     if (!WS请求) {
-      if (是正确路径) {
-        优选列表 = await 获取优选列表();
-      }
-
       if (url.pathname === 路径配置.威图锐) {
         return 威图锐配置文件(访问请求.headers.get("Host"));
       }
@@ -96,7 +89,6 @@ export default {
           tips: 提示界面,
         };
         const 工具 = Object.keys(配置生成器).find((工具) => 用户代理.includes(工具));
-        优选列表 = await 获取优选列表();
         const 生成配置 = 配置生成器[工具 || "tips"];
         return 生成配置(访问请求.headers.get("Host"));
       }
@@ -303,39 +295,6 @@ function 生成UUID() {
   return `${前八位}-0000-4000-8000-${后十二位}`;
 }
 
-async function 获取优选列表() {
-  let 原始列表 = [];
-  if (优选链接) {
-    try {
-      const 读取优选文本 = await fetch(优选链接);
-      const 转换优选文本 = await 读取优选文本.text();
-      原始列表 = 转换优选文本
-        .split("\n")
-        .map((line) => line.trim())
-        .filter((line) => line);
-
-      if (原始列表.length > 0) {
-        return 原始列表;
-      }
-    }
-    catch {
-        return [];
-    }
-  }
-  return [];
-}
-
-function 处理优选列表(优选列表, hostName) {
-  优选列表.unshift(`${hostName}#原生节点`);
-  return 优选列表.map((获取优选, index) => {
-    const [地址端口, 节点名字 = `节点 ${index + 1}`] = 获取优选.split("#");
-    const 拆分地址端口 = 地址端口.split(":");
-    const 端口 = 拆分地址端口.length > 1 ? Number(拆分地址端口.pop()) : 443;
-    const 地址 = 拆分地址端口.join(":");
-    return { 地址, 端口, 节点名字 };
-  });
-}
-
 // 订阅页面
 async function 提示界面() {
   const 提示界面 = `
@@ -365,25 +324,18 @@ async function 提示界面() {
 }
 
 function 威图锐配置文件(hostName) {
-  const 节点列表 = 处理优选列表(优选列表, hostName);
-  const 配置内容 = 节点列表
-    .map(({ 地址, 端口, 节点名字 }) => {
-      return `${维列斯}://${验证UUID}@${地址}:${端口}?encryption=none&security=tls&sni=${hostName}&fp=chrome&type=ws&host=${hostName}#${节点名字}`;
-    })
-    .join("\n");
+  const 配置内容 = `${维列斯}://${验证UUID}@${hostName}:443?encryption=none&security=tls&sni=${hostName}&fp=chrome&type=ws&host=${hostName}#原生节点`;
 
   return new Response(配置内容);
 }
 
 function 科拉什配置文件(hostName) {
-  const 节点列表 = 处理优选列表(优选列表, hostName);
-  const 生成节点 = (节点列表) => {
-    return 节点列表.map(({ 地址, 端口, 节点名字 }) => {
-      return {
-        nodeConfig: `- name: ${节点名字}
+  const 节点名称 = "节点";
+  const 配置内容 = `proxies:
+- name: ${节点名称}
   type: ${维列斯}
-  server: ${地址}
-  port: ${端口}
+  server: ${hostName}
+  port: 443
   uuid: ${验证UUID}
   udp: true
   tls: true
@@ -392,67 +344,18 @@ function 科拉什配置文件(hostName) {
   ws-opts:
     headers:
       Host: ${hostName}
-      User-Agent: Chrome`,
-        proxyConfig: `    - ${节点名字}`,
-      };
-    });
-  };
-
-  const 节点配置 = 生成节点(节点列表)
-    .map((node) => node.nodeConfig)
-    .join("\n");
-  const 代理配置 = 生成节点(节点列表)
-    .map((node) => node.proxyConfig)
-    .join("\n");
-
-  const 配置内容 = `
-proxies:
-${节点配置}
+      User-Agent: Chrome
 
 proxy-groups:
-- name: 海外规则
+- name: 节点
   type: select
   proxies:
-    - 延迟优选
-    - 故障转移
-    - DIRECT
-    - REJECT
-${代理配置}
-- name: 国内规则
-  type: select
-  proxies:
-    - DIRECT
-    - 延迟优选
-    - 故障转移
-    - REJECT
-${代理配置}
-- name: 广告屏蔽
-  type: select
-  proxies:
-    - REJECT
-    - DIRECT
-    - 延迟优选
-    - 故障转移
-${代理配置}
-- name: 延迟优选
-  type: url-test
-  url: https://www.google.com/generate_204
-  interval: 30
-  tolerance: 50
-  proxies:
-${代理配置}
-- name: 故障转移
-  type: fallback
-  url: https://www.google.com/generate_204
-  interval: 30
-  proxies:
-${代理配置}
+    - ${节点名称}
 
 rules:
-  - GEOSITE,category-ads-all,广告屏蔽
-  - GEOSITE,cn,国内规则
-  - GEOIP,CN,国内规则,no-resolve
-  - MATCH,海外规则
+  - GEOSITE,cn,DIRECT
+  - GEOIP,CN,DIRECT,no-resolve
+  - MATCH,节点
 `;
 
   return new Response(配置内容);
