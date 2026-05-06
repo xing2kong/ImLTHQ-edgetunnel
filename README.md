@@ -30,3 +30,5 @@ Edge Tunnel 是一个基于 Cloudflare Pages 的免费代理解决方案, 配置
 | DOH | `1.1.1.1` | DOH地址 |
 | PROXY_IP | `proxyip.cmliussss.net` | 反代地址和端口, 端口不填默认 `443` |
 | FAKE_WEB | `baidu.com` | 伪装网页 |
+
+## 不再提供优选IP
