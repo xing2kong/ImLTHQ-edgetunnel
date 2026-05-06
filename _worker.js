@@ -330,9 +330,9 @@ function 威图锐配置文件(hostName) {
 }
 
 function 科拉什配置文件(hostName) {
-  const 节点名称 = "节点";
-  const 配置内容 = `proxies:
-- name: ${节点名称}
+  const 配置内容 = `
+proxies:
+- name: ${hostName}
   type: ${维列斯}
   server: ${hostName}
   port: 443
@@ -347,15 +347,15 @@ function 科拉什配置文件(hostName) {
       User-Agent: Chrome
 
 proxy-groups:
-- name: 节点
+- name: 节点列表
   type: select
   proxies:
-    - ${节点名称}
+    - ${hostName}
 
 rules:
   - GEOSITE,cn,DIRECT
   - GEOIP,CN,DIRECT,no-resolve
-  - MATCH,节点
+  - MATCH,节点列表
 `;
 
   return new Response(配置内容);
